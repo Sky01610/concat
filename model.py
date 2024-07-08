@@ -8,6 +8,8 @@ class Generator(nn.Module):
     def __init__(self, color_mode='L'):
         super(Generator, self).__init__()
         channels = 1 if color_mode == 'L' else 3
+        self.color_mode = color_mode
+        
         # 4次下采样
         self.C1 = Conv(channels, 64)
         self.D1 = DownSampling(64)
@@ -30,7 +32,8 @@ class Generator(nn.Module):
         self.C9 = Conv(128, 64)
 
         self.Th = torch.nn.Sigmoid()
-        self.pred = nn.Conv2d(64, channels, 3, 1, 1)  # 输出单通道
+        self.amplitude_pred = nn.Conv2d(64, 1, 3, 1, 1)
+        self.phase_pred = nn.Conv2d(64, 1, 3, 1, 1)
 
     def forward(self, x):
         # 下采样部分
@@ -47,56 +50,13 @@ class Generator(nn.Module):
         O3 = self.C8(self.U3(O2, R2))
         O4 = self.C9(self.U4(O3, R1))
 
-        output = self.Th(self.pred(O4))
+        amplitude_output = self.Th(self.amplitude_pred(O4))
+        phase_output = self.Th(self.phase_pred(O4))
 
-        return output
+        # 将振幅和相位图像沿通道维度连接
+        combined_output = torch.cat((amplitude_output, phase_output), dim=1)
 
-class Conv(nn.Module):
-    def __init__(self, C_in, C_out):
-        super(Conv, self).__init__()
-        self.layer = nn.Sequential(
-            nn.Conv2d(C_in, C_out, 3, 1, 1),
-            nn.BatchNorm2d(C_out),
-            # 防止过拟合
-            nn.Dropout(0.01),
-            nn.LeakyReLU(),
-
-            nn.Conv2d(C_out, C_out, 3, 1, 1),
-            nn.BatchNorm2d(C_out),
-            # 防止过拟合
-            nn.Dropout(0.01),
-            nn.LeakyReLU(),
-        )
-
-    def forward(self, x):
-        return self.layer(x)
-
-# 下采样模块
-class DownSampling(nn.Module):
-    def __init__(self, C):
-        super(DownSampling, self).__init__()
-        self.Down = nn.Sequential(
-            # 使用卷积进行2倍的下采样，通道数不变
-            nn.Conv2d(C, C, 3, 2, 1),
-            nn.LeakyReLU()
-        )
-
-    def forward(self, x):
-        return self.Down(x)
-
-# 上采样模块
-class UpSampling(nn.Module):
-    def __init__(self, C):
-        super(UpSampling, self).__init__()
-        # 特征图大小扩大2倍，通道数减半
-        self.Up = nn.Conv2d(C, C // 2, 1, 1)
-
-    def forward(self, x, r):
-        # 使用邻近插值进行上采样
-        up = F.interpolate(x, scale_factor=2, mode="nearest")
-        x = self.Up(up)
-        # 拼接，当前上采样的，和之前下采样过程中的
-        return torch.cat((x, r), 1)
+        return combined_output
 
 class Discriminator(nn.Module):
     def __init__(self, num_feat=64, skip_connection=True, color_mode='RGB'):
